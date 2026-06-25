@@ -1,0 +1,44 @@
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: mattermost-warning
+  group_by: ["alertname", "severity", "env", "service"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - receiver: mattermost-critical
+      matchers:
+        - severity="critical"
+
+receivers:
+  - name: mattermost-warning
+    slack_configs:
+      - api_url: __MATTERMOST_WEBHOOK_URL__
+        send_resolved: true
+        username: prometheus-alertmanager
+        icon_emoji: ":warning:"
+        title: '[{{ .Status | toUpper }}][{{ .CommonLabels.severity | toUpper }}] {{ .CommonLabels.alertname }}'
+        text: >-
+          {{ range .Alerts -}}
+          *Summary:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Target:* {{ .Labels.instance }}
+          *Labels:* {{ range .Labels.SortedPairs }}{{ .Name }}={{ .Value }} {{ end }}
+          {{ end }}
+
+  - name: mattermost-critical
+    slack_configs:
+      - api_url: __MATTERMOST_WEBHOOK_URL__
+        send_resolved: true
+        username: prometheus-alertmanager
+        icon_emoji: ":rotating_light:"
+        title: '[{{ .Status | toUpper }}][{{ .CommonLabels.severity | toUpper }}] {{ .CommonLabels.alertname }}'
+        text: >-
+          {{ range .Alerts -}}
+          *Summary:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Target:* {{ .Labels.instance }}
+          *Labels:* {{ range .Labels.SortedPairs }}{{ .Name }}={{ .Value }} {{ end }}
+          {{ end }}

@@ -1,0 +1,478 @@
+import groovy.json.JsonOutput
+
+def deployTarget = 'blue'
+
+def notifyMattermost(String message, String color = '#439FE0') {
+  if (!env.MATTERMOST_WEBHOOK_URL?.trim()) {
+    echo 'MATTERMOST_WEBHOOK_URL is not configured; skipping notification.'
+    return
+  }
+
+  def payload = JsonOutput.toJson([
+    text: message,
+    attachments: [[color: color, text: message]]
+  ])
+
+  def escapedPayload = payload.replace("'", "'\"'\"'")
+  sh """
+    curl -fsS -X POST \
+      -H 'Content-Type: application/json' \
+      -d '${escapedPayload}' \
+      '${env.MATTERMOST_WEBHOOK_URL}' >/dev/null
+  """
+}
+
+def buildConsoleUrl() {
+  if (env.RUN_DISPLAY_URL?.trim() && !env.RUN_DISPLAY_URL.contains('unconfigured-jenkins-location')) {
+    return "${env.RUN_DISPLAY_URL}console"
+  }
+  if (env.BUILD_URL?.trim() && !env.BUILD_URL.contains('unconfigured-jenkins-location')) {
+    return "${env.BUILD_URL}console"
+  }
+  if (env.JENKINS_PUBLIC_URL?.trim() && env.JOB_NAME?.trim() && env.BUILD_NUMBER?.trim()) {
+    return "${env.JENKINS_PUBLIC_URL}/job/${env.JOB_NAME}/${env.BUILD_NUMBER}/console"
+  }
+  return currentBuild?.absoluteUrl ? "${currentBuild.absoluteUrl}console" : ''
+}
+
+def ensureKnownHost(String host) {
+  sh """
+    set -eu
+    mkdir -p "\$HOME/.ssh"
+    chmod 700 "\$HOME/.ssh"
+    touch "\$HOME/.ssh/known_hosts"
+    ssh-keyscan -H '${host}' >> "\$HOME/.ssh/known_hosts" 2>/dev/null || true
+    chmod 644 "\$HOME/.ssh/known_hosts"
+  """
+}
+
+def runRemote(String command) {
+  def escapedCommand = command.replace("'", "'\"'\"'")
+  sh """
+    set -eu
+    ssh -i '${env.JENKINS_DEPLOY_KEY_PATH}' \
+      -o BatchMode=yes \
+      -o StrictHostKeyChecking=yes \
+      '${env.S1_DEPLOY_USER}@${env.S1_DEPLOY_HOST}' \
+      '${escapedCommand}'
+  """
+}
+
+def captureRemote(String command) {
+  def escapedCommand = command.replace("'", "'\"'\"'")
+  return sh(
+    script: """
+      set -eu
+      ssh -i '${env.JENKINS_DEPLOY_KEY_PATH}' \
+        -o BatchMode=yes \
+        -o StrictHostKeyChecking=yes \
+        '${env.S1_DEPLOY_USER}@${env.S1_DEPLOY_HOST}' \
+        '${escapedCommand}'
+    """,
+    returnStdout: true
+  ).trim()
+}
+
+def branchNameFromRef(String ref, String fallbackBranch) {
+  if (ref?.startsWith('refs/heads/')) {
+    return ref.replaceFirst('^refs/heads/', '')
+  }
+  return fallbackBranch
+}
+
+def syncLocalRepo(String repoPath, List branchCandidates) {
+  def candidates = branchCandidates.findAll { it?.trim() }.unique()
+  def quotedCandidates = candidates.collect { "'${it.replace("'", "'\"'\"'")}'" }.join(' ')
+
+  sh """
+    set -eu
+    GIT_SYNC_REMOTE_URL='${env.GITLAB_REPO_URL}' \
+      bash /usr/local/bin/soda-git-sync.sh ${repoPath} ${quotedCandidates}
+  """
+}
+
+def syncRemoteRepo(String repoPath, List branchCandidates) {
+  def candidates = branchCandidates.findAll { it?.trim() }.unique()
+  def quotedCandidates = candidates.collect { "'${it.replace("'", "'\"'\"'")}'" }.join(' ')
+
+  runRemote("""
+    sudo -u ${env.S1_DEPLOY_USER} env GIT_SYNC_REMOTE_URL='${env.GITLAB_REPO_URL}' \
+      bash /usr/local/bin/soda-git-sync.sh ${repoPath} ${quotedCandidates}
+  """.trim())
+}
+
+def assertHttpStatus(String url, List allowedStatuses) {
+  def status = sh(
+    script: "curl -ksS -o /dev/null -w '%{http_code}' '${url}'",
+    returnStdout: true
+  ).trim()
+
+  echo "${url} -> ${status}"
+  if (!allowedStatuses.contains(status)) {
+    error("Unexpected HTTP status ${status} for ${url}; expected one of ${allowedStatuses}")
+  }
+}
+
+def runRemoteMake(String repoPath, String target, String envPrefix = '') {
+  def prefix = envPrefix?.trim() ? "${envPrefix.trim()} " : ''
+  runRemote("cd ${repoPath} && ${prefix}make ${target}")
+}
+
+def captureRemoteMake(String repoPath, String target, String envPrefix = '') {
+  def prefix = envPrefix?.trim() ? "${envPrefix.trim()} " : ''
+  return captureRemote("cd ${repoPath} && ${prefix}make ${target}")
+}
+
+def assertLocalRequiredFiles(String repoPath, String branchLabel, List relativePaths) {
+  def missing = relativePaths.findAll { path ->
+    sh(script: "test -f '${repoPath}/${path}'", returnStatus: true) != 0
+  }
+
+  if (!missing.isEmpty()) {
+    error("${branchLabel} 브랜치에는 prod 배포 필수 파일이 없습니다: ${missing.join(', ')}")
+  }
+}
+
+pipeline {
+  agent any
+
+  options {
+    disableConcurrentBuilds()
+    buildDiscarder(logRotator(numToKeepStr: '20'))
+    timeout(time: 35, unit: 'MINUTES')
+  }
+
+  environment {
+    PROJECT_NAME = 'soda'
+    BUILD_START_TIME = ''
+    GITLAB_REPO_URL = 'https://lab.ssafy.com/s14-bigdata-dist-sub1/S14P21E105.git'
+    PROJECT_ROOT = '/home/ubuntu/soda-prod'
+    INFRA_DIR = '/home/ubuntu/soda-prod/infra'
+    DATA_PLATFORM_DIR = '/home/ubuntu/soda-prod/data-platform'
+    INFRA_COMPOSE_FILE = 'docker-compose.worker.prod.yml'
+    DATA_COMPOSE_FILE = 'docker-compose.worker.prod.yml'
+    INFRA_SERVICES = 'rabbitmq-prod prometheus-prod grafana-prod loki-prod promtail-prod cadvisor-prod alertmanager-prod blackbox-exporter node-exporter-s2'
+    S1_DEPLOY_HOST = 'j14e105.p.ssafy.io'
+    S1_DEPLOY_USER = 'ubuntu'
+    S1_PROJECT_ROOT = '/home/ubuntu/soda-prod'
+    JENKINS_DEPLOY_KEY_PATH = '/run/secrets/s1-deploy.pem'
+    PROD_URL = 'https://j14e105.p.ssafy.io'
+    GITLAB_REPO_CREDENTIALS_ID = 'gitlab-repo-read'
+    PROD_ENV_CREDENTIALS_ID = 'env-prod'
+    JENKINS_PUBLIC_URL = 'https://j14e105.p.ssafy.io/jenkins'
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        script {
+          def buildStartTime = new Date().format('yyyy-MM-dd HH:mm:ss')
+          env.BUILD_START_TIME = buildStartTime
+          notifyMattermost(
+            "🚀 **${env.PROJECT_NAME} Prod 배포 시작**\\n- 브랜치: ${branchNameFromRef(env.ref, 'master')}\\n- 빌드: #${env.BUILD_NUMBER}\\n- 시작: ${buildStartTime}",
+            '#439FE0'
+          )
+          ensureKnownHost(env.S1_DEPLOY_HOST)
+        }
+        withCredentials([usernamePassword(credentialsId: env.GITLAB_REPO_CREDENTIALS_ID, usernameVariable: 'GIT_REPO_USER', passwordVariable: 'GIT_REPO_PASS')]) {
+          sh '''
+            set +x
+            set -eu
+            mkdir -p "$HOME"
+            cat > "$HOME/.git-credentials" <<EOF
+https://${GIT_REPO_USER}:${GIT_REPO_PASS}@lab.ssafy.com
+EOF
+            git config --global credential.helper store
+            chmod 600 "$HOME/.git-credentials"
+          '''
+          script {
+            env.GIT_BRANCH_NAME = branchNameFromRef(env.ref, 'master')
+            def branchCandidates = [env.GIT_BRANCH_NAME, 'master', 'main']
+            syncLocalRepo(env.PROJECT_ROOT, branchCandidates)
+            syncRemoteRepo(env.S1_PROJECT_ROOT, branchCandidates)
+          }
+        }
+      }
+    }
+
+    stage('Prepare') {
+      steps {
+        sh '''
+          set -eux
+          docker version
+          docker compose version
+          mkdir -p "$PROJECT_ROOT"
+          test -r "$JENKINS_DEPLOY_KEY_PATH"
+          test -d "$WORKSPACE"
+        '''
+        withCredentials([file(credentialsId: env.PROD_ENV_CREDENTIALS_ID, variable: 'ENV_PROD_FILE')]) {
+          sh '''
+            set +x
+            set -eu
+            test -s "$ENV_PROD_FILE"
+            bash "$PROJECT_ROOT/scripts/infra/common/require-env-keys.sh" \
+              "$ENV_PROD_FILE" \
+              PROD_RDS_HOST \
+              PROD_RDS_PORT \
+              PROD_RDS_DB \
+              PROD_RDS_USER \
+              PROD_RDS_PASSWORD \
+              PROD_ELASTICACHE_HOST \
+              PROD_ELASTICACHE_PORT \
+              S3_ENDPOINT \
+              SPRING_PROFILES_ACTIVE \
+              SSAFY_CLIENT_ID \
+              SSAFY_CLIENT_SECRET \
+              'SSAFY_REDIRECT_URL|SSAFY_REDIRECT_URLS'
+            install -m 600 "$ENV_PROD_FILE" "$WORKSPACE/.env.prod"
+            install -m 600 "$WORKSPACE/.env.prod" "$PROJECT_ROOT/.env.prod"
+            scp -i "$JENKINS_DEPLOY_KEY_PATH" \
+              -o BatchMode=yes \
+              -o StrictHostKeyChecking=yes \
+              "$WORKSPACE/.env.prod" \
+              "${S1_DEPLOY_USER}@${S1_DEPLOY_HOST}:/tmp/.env.prod.codex"
+            ssh -i "$JENKINS_DEPLOY_KEY_PATH" \
+              -o BatchMode=yes \
+              -o StrictHostKeyChecking=yes \
+              "${S1_DEPLOY_USER}@${S1_DEPLOY_HOST}" \
+              "sudo install -d -m 755 ${S1_PROJECT_ROOT}/backend && sudo install -m 600 -o ${S1_DEPLOY_USER} -g ${S1_DEPLOY_USER} /tmp/.env.prod.codex ${S1_PROJECT_ROOT}/.env.prod && rm -f /tmp/.env.prod.codex"
+          '''
+        }
+      }
+    }
+
+    stage('Determine Target') {
+      steps {
+        script {
+          def blueRunning = captureRemote("sudo docker ps --filter 'name=spring-blue' --filter 'status=running' -q | grep -q . && echo true || echo false")
+          def greenRunning = captureRemote("sudo docker ps --filter 'name=spring-green' --filter 'status=running' -q | grep -q . && echo true || echo false")
+
+          if (blueRunning == 'true' && greenRunning == 'false') {
+            deployTarget = 'green'
+          } else if (greenRunning == 'true' && blueRunning == 'false') {
+            deployTarget = 'blue'
+          } else {
+            deployTarget = 'blue'
+          }
+
+          notifyMattermost(
+            "🎯 **[Prod]** 배포 대상 계산: **${deployTarget.toUpperCase()}**\\n- 비고: 현재 nginx traffic switch는 정적이라 이번 배포에서는 참고값으로만 사용합니다.",
+            '#439FE0'
+          )
+        }
+      }
+    }
+
+    stage('Build Backend (Prod)') {
+      steps {
+        script {
+          assertLocalRequiredFiles(
+            env.PROJECT_ROOT,
+            env.GIT_BRANCH_NAME ?: 'master',
+            [
+              'Makefile',
+              'backend/docker-compose.prod.yml',
+              'frontend/docker-compose.prod.yml',
+              'data-platform/docker-compose.prod.yml',
+              'data-platform/docker-compose.worker.prod.yml',
+              'infra/docker-compose.common.yml',
+              'infra/docker-compose.worker.prod.yml',
+              'infra/nginx/nginx.conf',
+              'scripts/infra/s1/up-prod.sh',
+              'scripts/infra/s2/up-async.sh',
+              'scripts/infra/s2/up-monitoring.sh'
+            ]
+          )
+          notifyMattermost("🔨 **[Prod]** Backend/worker runtime 검증 중...", '#FFA500')
+        }
+        sh '''
+          set -eux
+          test -f "$INFRA_DIR/$INFRA_COMPOSE_FILE"
+          test -f "$DATA_PLATFORM_DIR/$DATA_COMPOSE_FILE"
+          docker compose --env-file "$PROJECT_ROOT/.env.prod" -f "$INFRA_DIR/$INFRA_COMPOSE_FILE" config >/dev/null
+          docker compose --env-file "$PROJECT_ROOT/.env.prod" -f "$DATA_PLATFORM_DIR/$DATA_COMPOSE_FILE" config >/dev/null
+        '''
+        script {
+          runRemote(
+            "cd ${env.S1_PROJECT_ROOT} && " +
+            "sudo docker compose --env-file .env.prod --profile prod -f backend/docker-compose.yml -f backend/docker-compose.prod.yml config >/dev/null && " +
+            "sudo docker compose --env-file .env.prod --profile prod -f data-platform/docker-compose.yml -f data-platform/docker-compose.prod.yml config >/dev/null"
+          )
+        }
+      }
+    }
+
+    stage('Build Frontend (Prod)') {
+      steps {
+        script {
+          notifyMattermost("🔨 **[Prod]** Frontend/nginx runtime 검증 중...", '#FFA500')
+          runRemote(
+            "cd ${env.S1_PROJECT_ROOT} && " +
+            "sudo docker compose --env-file .env.prod --profile prod -f frontend/docker-compose.yml -f frontend/docker-compose.prod.yml config >/dev/null && " +
+            "sudo docker compose --env-file .env.prod --profile prod -f infra/docker-compose.common.yml config >/dev/null"
+          )
+        }
+      }
+    }
+
+    stage('Deploy (Prod)') {
+      steps {
+        script {
+          notifyMattermost("🚀 **[Prod]** S1/S2 운영 스택 배포 중...", '#FFA500')
+        }
+        sh '''
+          set -eux
+          cd "$PROJECT_ROOT"
+          make infra-s2-up-monitoring
+          make infra-s2-up-async
+        '''
+        script {
+          runRemoteMake(env.S1_PROJECT_ROOT, 'prod-app-up')
+        }
+      }
+    }
+
+    stage('Health Check (Prod)') {
+      steps {
+        sh '''
+          set -eux
+          check_health() {
+            local container_name="$1"
+            local status
+            local health
+
+            status="$(docker inspect --format='{{.State.Status}}' "$container_name")"
+            test "$status" = "running"
+
+            health="$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$container_name")"
+            if [ "$health" != "none" ]; then
+              test "$health" = "healthy"
+            fi
+          }
+
+          for name in rabbitmq-prod prometheus-prod grafana-prod loki-prod promtail-prod cadvisor-prod alertmanager-prod blackbox-exporter node-exporter-s2 celery-worker-prod celery-beat-prod; do
+            check_health "$name"
+          done
+
+          cd "$PROJECT_ROOT"
+          bash scripts/infra/common/celery-roundtrip-smoke.sh \
+            "$PROJECT_ROOT/.env.prod" \
+            "$DATA_PLATFORM_DIR/$DATA_COMPOSE_FILE"
+        '''
+        script {
+          runRemote("""
+            set -eu
+            for i in \$(seq 1 60); do
+              rag_status=\$(sudo docker inspect --format='{{.State.Status}}' fastapi-prod 2>/dev/null || true)
+              rag_health=\$(sudo docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' fastapi-prod 2>/dev/null || true)
+              api_status=\$(sudo docker inspect --format='{{.State.Status}}' spring-blue 2>/dev/null || true)
+              api_health=\$(sudo docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' spring-blue 2>/dev/null || true)
+              rag_exec_ready=false
+              if [ "\$rag_status" = "running" ] && sudo docker exec fastapi-prod python -c 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8083/v1/health")' >/dev/null 2>&1; then
+                rag_exec_ready=true
+              fi
+              if [ "\$rag_status" = "running" ] && { [ "\$rag_health" = "healthy" ] || [ "\$rag_exec_ready" = "true" ]; } && [ "\$api_status" = "running" ] && [ "\$api_health" = "healthy" ]; then
+                exit 0
+              fi
+              sleep 3
+            done
+            sudo docker ps --format 'table {{.Names}}\t{{.Status}}' | grep -E 'spring-blue|fastapi-prod|nginx|prod-frontend' || true
+            sudo docker logs --tail 100 spring-blue || true
+            sudo docker logs --tail 100 fastapi-prod || true
+            sudo docker inspect fastapi-prod --format '{{range .State.Health.Log}}{{.Start}} | exit={{.ExitCode}} | {{printf "%s" .Output}}{{println}}{{end}}' | tail -n 20 || true
+            exit 1
+          """.trim())
+        }
+      }
+    }
+
+    stage('Switch Traffic') {
+      steps {
+        script {
+          notifyMattermost(
+            "🔄 **[Prod]** Traffic switch 단계 실행\\n- 현재 nginx는 spring-blue 고정 라우팅이므로 실제 upstream 전환은 수행하지 않습니다.",
+            '#439FE0'
+          )
+        }
+      }
+    }
+
+    stage('Smoke Test (Prod)') {
+      steps {
+        script {
+          assertHttpStatus("${env.PROD_URL}/", ['200'])
+          assertHttpStatus("${env.PROD_URL}/rag/health", ['200'])
+          assertHttpStatus("${env.PROD_URL}/login", ['200'])
+          assertHttpStatus("${env.PROD_URL}/jenkins/login", ['200'])
+          assertHttpStatus("${env.PROD_URL}/api/v1/auth/reissue", ['200', '401'])
+        }
+        sh '''
+          set -eux
+          bash "$PROJECT_ROOT/scripts/infra/common/oauth-callback-smoke.sh" \
+            "${PROD_URL}/api/v1/auth/callback" \
+            "${PROD_URL}/auth/callback" \
+            "401"
+        '''
+      }
+    }
+
+    stage('Status Check (Prod)') {
+      steps {
+        script {
+          def s2Status = sh(
+            script: """
+              set -eu
+              cd '${env.PROJECT_ROOT}'
+              make infra-s2-ps
+            """,
+            returnStdout: true
+          ).trim()
+
+          def s1Status = captureRemote("""
+            set -eu
+            cd ${env.S1_PROJECT_ROOT}
+            sudo docker compose --env-file .env.prod --profile prod -f frontend/docker-compose.yml -f frontend/docker-compose.prod.yml ps
+            sudo docker compose --env-file .env.prod --profile prod -f backend/docker-compose.yml -f backend/docker-compose.prod.yml ps
+            sudo docker compose --env-file .env.prod --profile prod -f data-platform/docker-compose.yml -f data-platform/docker-compose.prod.yml ps
+            echo
+            sudo docker compose --env-file .env.prod -f infra/docker-compose.common.yml ps
+          """.trim())
+
+          notifyMattermost(
+            "📊 **[Prod] 배포 후 상태 확인**\\n```\\n[S2]\\n${s2Status}\\n\\n[S1]\\n${s1Status}\\n```",
+            '#36a64f'
+          )
+        }
+      }
+    }
+
+    stage('Cleanup') {
+      steps {
+        sh 'docker image prune -f || true'
+        script {
+          runRemote("sudo docker image prune -f || true")
+        }
+      }
+    }
+  }
+
+  post {
+    success {
+      script {
+        notifyMattermost(
+          "✅ **${env.PROJECT_NAME} Prod 배포 성공**\\n- 빌드: #${env.BUILD_NUMBER}\\n- URL: ${env.PROD_URL}",
+          '#36a64f'
+        )
+      }
+    }
+
+    failure {
+      script {
+        notifyMattermost(
+          "❌ **${env.PROJECT_NAME} Prod 배포 실패**\\n- 빌드: #${env.BUILD_NUMBER}\\n- 로그: ${buildConsoleUrl()}",
+          '#FF0000'
+        )
+      }
+    }
+  }
+}

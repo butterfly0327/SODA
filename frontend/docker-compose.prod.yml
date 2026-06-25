@@ -1,0 +1,25 @@
+services:
+  prod-frontend:
+    profiles:
+      - prod
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+      args:
+        VITE_API_URL: ${PROD_VITE_API_URL:-/api/v1}
+        SSAFY_AUTHORIZE_URL: ${SSAFY_AUTHORIZE_URL:-https://project.ssafy.com/oauth/sso-check}
+        SSAFY_CLIENT_ID: ${SSAFY_CLIENT_ID:-}
+        SSAFY_REDIRECT_URL: ${SSAFY_REDIRECT_URL:-https://j14e105.p.ssafy.io/auth/callback}
+    image: prod-frontend:latest
+    environment:
+      NODE_ENV: production
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:80"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  dev-frontend:
+    profiles:
+      - disabled

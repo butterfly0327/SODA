@@ -1,0 +1,179 @@
+===== SOURCE aihub =====
+[exit=0]
+STDOUT:
+{
+  "aihub": {
+    "status": "completed",
+    "collected_count": 5,
+    "upserted_count": 5,
+    "deactivated_count": 0,
+    "failed_count": 0,
+    "last_saved_source_dataset_key": "71870",
+    "effective_limit": 5,
+    "safe_mode": false,
+    "reconcile_missing": false,
+    "max_runtime_seconds": 600
+  }
+}
+STDERR:
+
+
+===== SOURCE aws_odr =====
+[exit=0]
+STDOUT:
+{
+  "aws_odr": {
+    "status": "completed",
+    "collected_count": 5,
+    "upserted_count": 5,
+    "deactivated_count": 0,
+    "failed_count": 0,
+    "last_saved_source_dataset_key": "datasets/3kricegenome.yaml",
+    "effective_limit": 5,
+    "safe_mode": false,
+    "reconcile_missing": false,
+    "max_runtime_seconds": 600
+  }
+}
+STDERR:
+
+
+===== SOURCE data_europa =====
+[exit=0]
+STDOUT:
+{
+  "data_europa": {
+    "status": "completed",
+    "collected_count": 5,
+    "upserted_count": 5,
+    "deactivated_count": 0,
+    "failed_count": 0,
+    "last_saved_source_dataset_key": "ea0e2977-8f16-4e37-881e-9bafe0ec3f70",
+    "effective_limit": 5,
+    "safe_mode": false,
+    "reconcile_missing": false,
+    "max_runtime_seconds": 600
+  }
+}
+STDERR:
+
+
+===== SOURCE data_gov =====
+[exit=0]
+STDOUT:
+{
+  "data_gov": {
+    "status": "completed",
+    "collected_count": 5,
+    "upserted_count": 5,
+    "deactivated_count": 0,
+    "failed_count": 0,
+    "last_saved_source_dataset_key": "cabfade2-406b-474a-8def-972ec2bce73d",
+    "effective_limit": 5,
+    "safe_mode": false,
+    "reconcile_missing": false,
+    "max_runtime_seconds": 600
+  }
+}
+STDERR:
+
+
+===== SOURCE figshare =====
+[exit=0]
+STDOUT:
+{
+  "figshare": {
+    "status": "completed",
+    "collected_count": 5,
+    "upserted_count": 5,
+    "deactivated_count": 0,
+    "failed_count": 0,
+    "last_saved_source_dataset_key": "29105261",
+    "effective_limit": 5,
+    "safe_mode": false,
+    "reconcile_missing": false,
+    "max_runtime_seconds": 600
+  }
+}
+STDERR:
+
+
+===== SOURCE harvard_dataverse =====
+[exit=0]
+STDOUT:
+{
+  "harvard_dataverse": {
+    "status": "completed",
+    "collected_count": 6,
+    "upserted_count": 5,
+    "deactivated_count": 0,
+    "failed_count": 0,
+    "last_saved_source_dataset_key": "doi:10.7910/DVN/CG3N9B",
+    "effective_limit": 5,
+    "safe_mode": false,
+    "reconcile_missing": false,
+    "max_runtime_seconds": 600
+  }
+}
+STDERR:
+
+
+===== SOURCE huggingface =====
+[exit=0]
+STDOUT:
+{
+  "huggingface": {
+    "status": "completed",
+    "collected_count": 15,
+    "upserted_count": 5,
+    "deactivated_count": 0,
+    "failed_count": 0,
+    "last_saved_source_dataset_key": "fosters/ludzi_na_balocie_set",
+    "effective_limit": 5,
+    "safe_mode": false,
+    "reconcile_missing": false,
+    "max_runtime_seconds": 600
+  }
+}
+STDERR:
+
+
+===== SOURCE kaggle =====
+[exit=0]
+STDOUT:
+{
+  "kaggle": {
+    "status": "completed",
+    "collected_count": 5,
+    "upserted_count": 5,
+    "deactivated_count": 0,
+    "failed_count": 0,
+    "last_saved_source_dataset_key": "syedaeman2212/makeup-sales-in-2025",
+    "effective_limit": 5,
+    "safe_mode": false,
+    "reconcile_missing": false,
+    "max_runtime_seconds": 600
+  }
+}
+STDERR:
+
+
+===== SOURCE zenodo =====
+[exit=0]
+STDOUT:
+{
+  "zenodo": {
+    "status": "completed",
+    "collected_count": 6,
+    "upserted_count": 5,
+    "deactivated_count": 0,
+    "failed_count": 0,
+    "last_saved_source_dataset_key": "19292647",
+    "effective_limit": 5,
+    "safe_mode": false,
+    "reconcile_missing": false,
+    "max_runtime_seconds": 600
+  }
+}
+STDERR:
+

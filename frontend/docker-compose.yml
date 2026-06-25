@@ -1,0 +1,60 @@
+services:
+  prod-frontend:
+    profiles:
+      - prod
+    image: nginx:1.27-alpine
+    container_name: prod-frontend
+    restart: unless-stopped
+    expose:
+      - "80"
+    environment:
+      NODE_ENV: production
+    networks:
+      - prod-net
+
+  dev-frontend:
+    profiles:
+      - dev
+    image: node:20-alpine
+    container_name: dev-frontend
+    restart: unless-stopped
+    working_dir: /app
+    command: ["sh", "-c", "npm install && npm run dev -- --host 0.0.0.0 --port 5173"]
+    ports:
+      - "127.0.0.1:${DEV_FRONTEND_PUBLISHED_PORT:-5173}:5173"
+    expose:
+      - "5173"
+    environment:
+      NODE_ENV: development
+      CHOKIDAR_USEPOLLING: "true"
+      VITE_API_URL: ${DEV_VITE_API_URL:-/dev/api/v1}
+      SSAFY_AUTHORIZE_URL: ${SSAFY_AUTHORIZE_URL:-https://project.ssafy.com/oauth/sso-check}
+      SSAFY_CLIENT_ID: ${SSAFY_CLIENT_ID:-}
+      SSAFY_REDIRECT_URL: ${SSAFY_REDIRECT_URL:-}
+      VITE_PUBLIC_BASE_PATH: /dev/
+      VITE_ALLOWED_HOSTS: localhost,127.0.0.1,j14e105.p.ssafy.io
+    volumes:
+      - ./:/app
+      - frontend-node-modules:/app/node_modules
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:5173').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+    networks:
+      - dev-net
+
+networks:
+  prod-net:
+    external: true
+  dev-net:
+    external: true
+
+volumes:
+  frontend-node-modules:

@@ -1,0 +1,433 @@
+import groovy.json.JsonOutput
+
+def notifyMattermost(String message, String color = '#439FE0') {
+  if (!env.MATTERMOST_WEBHOOK_URL?.trim()) {
+    echo 'MATTERMOST_WEBHOOK_URL is not configured; skipping notification.'
+    return
+  }
+
+  def payload = JsonOutput.toJson([
+    text: message,
+    attachments: [[color: color, text: message]]
+  ])
+
+  def escapedPayload = payload.replace("'", "'\"'\"'")
+  sh """
+    curl -fsS -X POST \
+      -H 'Content-Type: application/json' \
+      -d '${escapedPayload}' \
+      '${env.MATTERMOST_WEBHOOK_URL}' >/dev/null
+  """
+}
+
+def buildConsoleUrl() {
+  if (env.RUN_DISPLAY_URL?.trim() && !env.RUN_DISPLAY_URL.contains('unconfigured-jenkins-location')) {
+    return "${env.RUN_DISPLAY_URL}console"
+  }
+  if (env.BUILD_URL?.trim() && !env.BUILD_URL.contains('unconfigured-jenkins-location')) {
+    return "${env.BUILD_URL}console"
+  }
+  if (env.JENKINS_PUBLIC_URL?.trim() && env.JOB_NAME?.trim() && env.BUILD_NUMBER?.trim()) {
+    return "${env.JENKINS_PUBLIC_URL}/job/${env.JOB_NAME}/${env.BUILD_NUMBER}/console"
+  }
+  return currentBuild?.absoluteUrl ? "${currentBuild.absoluteUrl}console" : ''
+}
+
+def ensureKnownHost(String host) {
+  sh """
+    set -eu
+    mkdir -p "\$HOME/.ssh"
+    chmod 700 "\$HOME/.ssh"
+    touch "\$HOME/.ssh/known_hosts"
+    ssh-keyscan -H '${host}' >> "\$HOME/.ssh/known_hosts" 2>/dev/null || true
+    chmod 644 "\$HOME/.ssh/known_hosts"
+  """
+}
+
+def runRemote(String command) {
+  def escapedCommand = command.replace("'", "'\"'\"'")
+  sh """
+    set -eu
+    ssh -i '${env.JENKINS_DEPLOY_KEY_PATH}' \
+      -o BatchMode=yes \
+      -o StrictHostKeyChecking=yes \
+      '${env.S1_DEPLOY_USER}@${env.S1_DEPLOY_HOST}' \
+      '${escapedCommand}'
+  """
+}
+
+def captureRemote(String command) {
+  def escapedCommand = command.replace("'", "'\"'\"'")
+  return sh(
+    script: """
+      set -eu
+      ssh -i '${env.JENKINS_DEPLOY_KEY_PATH}' \
+        -o BatchMode=yes \
+        -o StrictHostKeyChecking=yes \
+        '${env.S1_DEPLOY_USER}@${env.S1_DEPLOY_HOST}' \
+        '${escapedCommand}'
+    """,
+    returnStdout: true
+  ).trim()
+}
+
+def branchNameFromRef(String ref, String fallbackBranch) {
+  if (ref?.startsWith('refs/heads/')) {
+    return ref.replaceFirst('^refs/heads/', '')
+  }
+  return fallbackBranch
+}
+
+def localProjectRoot() {
+  return "${env.WORKSPACE}/repo-cache"
+}
+
+def syncLocalRepo(String repoPath, List branchCandidates) {
+  def candidates = branchCandidates.findAll { it?.trim() }.unique()
+  def quotedCandidates = candidates.collect { "'${it.replace("'", "'\"'\"'")}'" }.join(' ')
+
+  sh """
+    set -eu
+    GIT_SYNC_REMOTE_URL='${env.GITLAB_REPO_URL}' \
+      bash /usr/local/bin/soda-git-sync.sh ${repoPath} ${quotedCandidates}
+  """
+}
+
+def syncRemoteRepo(String repoPath, List branchCandidates) {
+  def candidates = branchCandidates.findAll { it?.trim() }.unique()
+  def quotedCandidates = candidates.collect { "'${it.replace("'", "'\"'\"'")}'" }.join(' ')
+
+  runRemote("""
+    sudo -u ${env.S1_DEPLOY_USER} env GIT_SYNC_REMOTE_URL='${env.GITLAB_REPO_URL}' \
+      bash /usr/local/bin/soda-git-sync.sh ${repoPath} ${quotedCandidates}
+  """.trim())
+}
+
+def sanitizeRemoteWorktree(String localRepoPath, String repoPath, String ownerName, String ownerGroup = ownerName) {
+  sh """
+    set -eu
+    ssh -i '${env.JENKINS_DEPLOY_KEY_PATH}' \
+      -o BatchMode=yes \
+      -o StrictHostKeyChecking=yes \
+      '${env.S1_DEPLOY_USER}@${env.S1_DEPLOY_HOST}' \
+      'sudo bash -s -- ${repoPath} ${ownerName} ${ownerGroup}' \
+      < '${localRepoPath}/scripts/infra/common/sanitize-remote-worktree.sh'
+  """
+}
+
+def assertHttpStatus(String url, List allowedStatuses) {
+  def status = sh(
+    script: "curl -ksS -o /dev/null -w '%{http_code}' '${url}'",
+    returnStdout: true
+  ).trim()
+
+  echo "${url} -> ${status}"
+  if (!allowedStatuses.contains(status)) {
+    error("Unexpected HTTP status ${status} for ${url}; expected one of ${allowedStatuses}")
+  }
+}
+
+def runRemoteMake(String repoPath, String target, String envPrefix = '') {
+  def prefix = envPrefix?.trim() ? "${envPrefix.trim()} " : ''
+  runRemote("cd ${repoPath} && ${prefix}make ${target}")
+}
+
+def captureRemoteMake(String repoPath, String target, String envPrefix = '') {
+  def prefix = envPrefix?.trim() ? "${envPrefix.trim()} " : ''
+  return captureRemote("cd ${repoPath} && ${prefix}make ${target}")
+}
+
+def buildRemoteDevBootJar(String repoPath, String builderImage) {
+  runRemote("""
+    set -eu
+    cd ${repoPath}/backend
+    uid=\$(id -u)
+    gid=\$(id -g)
+    sudo rm -rf build .gradle
+    sudo install -d -m 775 -o "\${uid}" -g "\${gid}" build .gradle
+    sudo docker run --rm \
+      -u "\${uid}:\${gid}" \
+      -e GRADLE_USER_HOME=/tmp/.gradle \
+      -v '${repoPath}/backend:/workspace' \
+      -w /workspace \
+      '${builderImage}' \
+      sh -lc 'chmod +x gradlew && ./gradlew --project-cache-dir /tmp/project-cache bootJar -x test --no-daemon'
+  """.trim())
+}
+
+pipeline {
+  agent any
+
+  options {
+    disableConcurrentBuilds()
+    buildDiscarder(logRotator(numToKeepStr: '20'))
+    timeout(time: 25, unit: 'MINUTES')
+  }
+
+  environment {
+    PROJECT_NAME = 'soda'
+    BUILD_START_TIME = ''
+    GITLAB_REPO_URL = 'https://lab.ssafy.com/s14-bigdata-dist-sub1/S14P21E105.git'
+    S1_DEPLOY_HOST = 'j14e105.p.ssafy.io'
+    S1_DEPLOY_USER = 'ubuntu'
+    S1_PROJECT_ROOT = '/home/ubuntu/soda-dev'
+    JENKINS_DEPLOY_KEY_PATH = '/run/secrets/s1-deploy.pem'
+    GRADLE_BUILDER_IMAGE = 'gradle:8.14.4-jdk21-alpine'
+    DEV_URL = 'https://j14e105.p.ssafy.io/dev'
+    GITLAB_REPO_CREDENTIALS_ID = 'gitlab-repo-read'
+    DEV_ENV_CREDENTIALS_ID = 'env-dev'
+    JENKINS_PUBLIC_URL = 'https://j14e105.p.ssafy.io/jenkins'
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        withCredentials([usernamePassword(credentialsId: env.GITLAB_REPO_CREDENTIALS_ID, usernameVariable: 'GIT_REPO_USER', passwordVariable: 'GIT_REPO_PASS')]) {
+          sh '''
+            set +x
+            set -eu
+            mkdir -p "$HOME"
+            cat > "$HOME/.git-credentials" <<EOF
+https://${GIT_REPO_USER}:${GIT_REPO_PASS}@lab.ssafy.com
+EOF
+            git config --global credential.helper store
+            chmod 600 "$HOME/.git-credentials"
+          '''
+          script {
+            def buildStartTime = new Date().format('yyyy-MM-dd HH:mm:ss')
+            env.BUILD_START_TIME = buildStartTime
+            notifyMattermost(
+              "🚀 **${env.PROJECT_NAME} Dev 배포 시작**\\n- 브랜치: develop\\n- 빌드: #${env.BUILD_NUMBER}\\n- 시작: ${buildStartTime}",
+              '#439FE0'
+            )
+            ensureKnownHost(env.S1_DEPLOY_HOST)
+            env.GIT_BRANCH_NAME = branchNameFromRef(env.ref, 'develop')
+            def localRepoPath = localProjectRoot()
+            syncLocalRepo(localRepoPath, [env.GIT_BRANCH_NAME, 'develop'])
+            sanitizeRemoteWorktree(localRepoPath, env.S1_PROJECT_ROOT, env.S1_DEPLOY_USER)
+            syncRemoteRepo(env.S1_PROJECT_ROOT, [env.GIT_BRANCH_NAME, 'develop'])
+          }
+        }
+      }
+    }
+
+    stage('Prepare') {
+      steps {
+        script {
+          def localRepoPath = localProjectRoot()
+          sh """
+            set -eux
+            docker version
+            docker compose version
+            test -r "\$JENKINS_DEPLOY_KEY_PATH"
+            test -d "\$WORKSPACE"
+            test -d '${localRepoPath}'
+          """
+        }
+        withCredentials([file(credentialsId: env.DEV_ENV_CREDENTIALS_ID, variable: 'ENV_DEV_FILE')]) {
+          script {
+            def localRepoPath = localProjectRoot()
+            sh """
+              set +x
+              set -eu
+              test -s "\$ENV_DEV_FILE"
+              bash '${localRepoPath}/scripts/infra/common/require-env-keys.sh' \
+                "\$ENV_DEV_FILE" \
+                DEV_POSTGRES_HOST \
+                DEV_POSTGRES_PORT \
+                DEV_POSTGRES_DB \
+                DEV_POSTGRES_USER \
+                DEV_POSTGRES_PASSWORD \
+                SPRING_PROFILES_ACTIVE \
+                SSAFY_CLIENT_ID \
+                SSAFY_CLIENT_SECRET \
+                'SSAFY_REDIRECT_URL|SSAFY_REDIRECT_URLS'
+              install -m 600 "\$ENV_DEV_FILE" "\$WORKSPACE/.env.dev"
+              scp -i "\$JENKINS_DEPLOY_KEY_PATH" \
+                -o BatchMode=yes \
+                -o StrictHostKeyChecking=yes \
+                "\$WORKSPACE/.env.dev" \
+                "${S1_DEPLOY_USER}@${S1_DEPLOY_HOST}:/tmp/.env.dev.codex"
+              ssh -i "\$JENKINS_DEPLOY_KEY_PATH" \
+                -o BatchMode=yes \
+                -o StrictHostKeyChecking=yes \
+                "${S1_DEPLOY_USER}@${S1_DEPLOY_HOST}" \
+                "sudo install -d -m 755 ${S1_PROJECT_ROOT}/backend && sudo install -m 600 -o ${S1_DEPLOY_USER} -g ${S1_DEPLOY_USER} /tmp/.env.dev.codex ${S1_PROJECT_ROOT}/.env.dev && rm -f /tmp/.env.dev.codex"
+            """
+          }
+        }
+      }
+    }
+
+    stage('Build Backend (Dev)') {
+      steps {
+        script {
+          notifyMattermost("🔨 **[Dev]** Backend runtime 검증 중...", '#FFA500')
+          runRemote(
+            "cd ${env.S1_PROJECT_ROOT} && " +
+            "sudo docker compose --env-file .env.dev --profile dev -f backend/docker-compose.yml -f backend/docker-compose.dev.yml config >/dev/null && " +
+            "sudo docker compose --env-file .env.dev --profile dev -f data-platform/docker-compose.yml -f data-platform/docker-compose.dev.yml config >/dev/null"
+          )
+          buildRemoteDevBootJar(env.S1_PROJECT_ROOT, env.GRADLE_BUILDER_IMAGE)
+        }
+      }
+    }
+
+    stage('Build Frontend (Dev)') {
+      steps {
+        script {
+          notifyMattermost("🔨 **[Dev]** Frontend runtime 검증 중...", '#FFA500')
+          runRemote(
+            "cd ${env.S1_PROJECT_ROOT} && " +
+            "sudo docker compose --env-file .env.dev --profile dev -f frontend/docker-compose.yml -f frontend/docker-compose.dev.yml config >/dev/null"
+          )
+        }
+      }
+    }
+
+    stage('Deploy (Dev)') {
+      steps {
+        script {
+          notifyMattermost("🚀 **[Dev]** S1 dev 배포 중...", '#FFA500')
+          runRemote("cd ${env.S1_PROJECT_ROOT} && bash scripts/infra/s1/up-dev.sh")
+        }
+      }
+    }
+
+    stage('Deploy Async (Dev)') {
+      steps {
+        script {
+          notifyMattermost("🚀 **[Dev]** S1 dev async 배포 중...", '#FFA500')
+          runRemote("cd ${env.S1_PROJECT_ROOT} && bash scripts/infra/s1/up-async-dev.sh")
+        }
+      }
+    }
+
+    stage('Health Check (Dev)') {
+      steps {
+        script {
+          runRemote("""
+            set -eu
+            for i in \$(seq 1 30); do
+              spring_status=\$(sudo docker inspect --format='{{.State.Status}}' dev-spring 2>/dev/null || true)
+              spring_health=\$(sudo docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' dev-spring 2>/dev/null || true)
+              if [ "\$spring_status" = "running" ] && [ "\$spring_health" = "healthy" ]; then
+                exit 0
+              fi
+              sleep 3
+            done
+            sudo docker logs --tail 100 dev-spring || true
+            exit 1
+          """.trim())
+
+          runRemote("""
+            set -eu
+            for i in \$(seq 1 30); do
+              rag_status=\$(sudo docker inspect --format='{{.State.Status}}' fastapi-dev 2>/dev/null || true)
+              rag_health=\$(sudo docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' fastapi-dev 2>/dev/null || true)
+              if [ "\$rag_status" = "running" ] && [ "\$rag_health" = "healthy" ]; then
+                exit 0
+              fi
+              sleep 3
+            done
+            sudo docker logs --tail 100 fastapi-dev || true
+            exit 1
+          """.trim())
+
+          runRemote("""
+            set -eu
+            for i in \$(seq 1 30); do
+              rabbitmq_status=\$(sudo docker inspect --format='{{.State.Status}}' rabbitmq 2>/dev/null || true)
+              rabbitmq_health=\$(sudo docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' rabbitmq 2>/dev/null || true)
+              if [ "\$rabbitmq_status" = "running" ] && [ "\$rabbitmq_health" = "healthy" ]; then
+                exit 0
+              fi
+              sleep 3
+            done
+            sudo docker logs --tail 100 rabbitmq || true
+            exit 1
+          """.trim())
+
+          runRemote("""
+            set -eu
+            for name in celery-worker celery-beat; do
+              status=\$(sudo docker inspect --format='{{.State.Status}}' "\$name" 2>/dev/null || true)
+              if [ "\$status" != "running" ]; then
+                sudo docker logs --tail 100 "\$name" || true
+                exit 1
+              fi
+            done
+          """.trim())
+
+          runRemote("""
+            set -eu
+            cd ${env.S1_PROJECT_ROOT}
+            bash scripts/infra/common/celery-roundtrip-smoke.sh \
+              "${env.S1_PROJECT_ROOT}/.env.dev" \
+              "${env.S1_PROJECT_ROOT}/data-platform/docker-compose.worker.yml" \
+              celery-worker \
+              30
+          """.trim())
+        }
+      }
+    }
+
+    stage('Smoke Test (Dev)') {
+      steps {
+        script {
+          assertHttpStatus("${env.DEV_URL}/", ['200'])
+          assertHttpStatus("${env.DEV_URL}/rag/health", ['200'])
+          assertHttpStatus("${env.DEV_URL}/login", ['200'])
+          assertHttpStatus("${env.DEV_URL}/api/v1/auth/reissue", ['200', '401'])
+          def localRepoPath = localProjectRoot()
+          sh """
+            set -eux
+            bash '${localRepoPath}/scripts/infra/common/oauth-callback-smoke.sh' \
+              "${DEV_URL}/api/v1/auth/callback" \
+              "${DEV_URL}/auth/callback" \
+              "401"
+          """
+        }
+      }
+    }
+
+    stage('Status Check (Dev)') {
+      steps {
+        script {
+          def status = captureRemote("cd ${env.S1_PROJECT_ROOT} && bash scripts/infra/s1/ps-dev.sh")
+
+          notifyMattermost(
+            "📊 **[Dev] 배포 후 상태 확인**\\n```\\n${status}\\n```",
+            '#36a64f'
+          )
+        }
+      }
+    }
+
+    stage('Cleanup') {
+      steps {
+        runRemote("sudo docker image prune -f || true")
+      }
+    }
+  }
+
+  post {
+    success {
+      script {
+        notifyMattermost(
+          "✅ **${env.PROJECT_NAME} Dev 배포 성공**\\n- 빌드: #${env.BUILD_NUMBER}\\n- URL: ${env.DEV_URL}",
+          '#36a64f'
+        )
+      }
+    }
+
+    failure {
+      script {
+        notifyMattermost(
+          "❌ **${env.PROJECT_NAME} Dev 배포 실패**\\n- 빌드: #${env.BUILD_NUMBER}\\n- 로그: ${buildConsoleUrl()}",
+          '#FF0000'
+        )
+      }
+    }
+  }
+}

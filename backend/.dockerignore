@@ -1,0 +1,8 @@
+.gradle
+build
+!build/
+!build/libs/
+!build/libs/*.jar
+.git
+src/main/resources/application-local.yml
+docker-compose*.yml

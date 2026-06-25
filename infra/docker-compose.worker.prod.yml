@@ -1,0 +1,250 @@
+name: infra-prod
+
+services:
+  rabbitmq-prod:
+    image: rabbitmq:3.13-management
+    container_name: rabbitmq-prod
+    restart: unless-stopped
+    env_file:
+      - ../.env.prod
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    networks:
+      - common-net
+
+  jenkins-prod:
+    image: soda-jenkins:prod
+    build:
+      context: .
+      dockerfile: ./jenkins/Dockerfile.prod
+    container_name: jenkins-prod
+    restart: unless-stopped
+    user: root
+    working_dir: /home/ubuntu/soda
+    env_file:
+      - ../.env.prod
+    environment:
+      TZ: Asia/Seoul
+      JENKINS_OPTS: --prefix=/jenkins
+      JAVA_OPTS: >-
+        -Djenkins.install.runSetupWizard=false
+        -Duser.timezone=Asia/Seoul
+        -Dorg.apache.commons.jelly.tags.fmt.timeZone=Asia/Seoul
+      JENKINS_PUBLIC_URL: ${JENKINS_PUBLIC_URL:-https://j14e105.p.ssafy.io/jenkins}
+      JENKINS_ADMIN_EMAIL: ${JENKINS_ADMIN_EMAIL:-noreply@ssafy.io}
+      S1_DEPLOY_HOST: j14e105.p.ssafy.io
+      S1_DEPLOY_USER: ubuntu
+      S1_PROJECT_ROOT: /home/ubuntu/soda-prod
+      PROD_PUBLIC_BASE_URL: https://j14e105.p.ssafy.io
+      JENKINS_DEPLOY_KEY_PATH: /run/secrets/s1-deploy.pem
+    volumes:
+      - jenkins-home:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /usr/bin/docker:/usr/bin/docker:ro
+      - /usr/libexec/docker/cli-plugins:/usr/libexec/docker/cli-plugins:ro
+      - /home/ubuntu:/home/ubuntu
+      - /home/ubuntu/.ssh/s1-deploy.pem:/run/secrets/s1-deploy.pem:ro
+    ports:
+      - "18080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/jenkins/login > /dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - ci-net
+
+  prometheus-prod:
+    image: prom/prometheus:v2.53.1
+    container_name: prometheus-prod
+    restart: unless-stopped
+    env_file:
+      - ../.env.prod
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        sed \
+          -e "s|__PROD_RDS_HOST__|$${PROD_RDS_HOST}|g" \
+          -e "s|__PROD_RDS_PORT__|$${PROD_RDS_PORT:-5432}|g" \
+          -e "s|__PROD_ELASTICACHE_HOST__|$${PROD_ELASTICACHE_HOST}|g" \
+          -e "s|__PROD_ELASTICACHE_PORT__|$${PROD_ELASTICACHE_PORT:-6379}|g" \
+          -e "s|__S3_ENDPOINT__|$${S3_ENDPOINT}|g" \
+          /etc/prometheus/prometheus.tmpl.yml > /tmp/prometheus.yml
+        exec /bin/prometheus --config.file=/tmp/prometheus.yml --storage.tsdb.path=/prometheus
+    volumes:
+      - ./monitoring/prometheus.prod.yml:/etc/prometheus/prometheus.tmpl.yml:ro
+      - ./monitoring/prometheus-alerts:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9090/-/healthy > /dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    networks:
+      - monitoring-net
+
+  grafana-prod:
+    image: grafana/grafana:11.1.0
+    container_name: grafana-prod
+    restart: unless-stopped
+    environment:
+      GF_SERVER_ROOT_URL: https://j14e105.p.ssafy.io/grafana/
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/datasources/prod.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - ./monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "8100:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3000/login > /dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - monitoring-net
+
+  loki-prod:
+    image: grafana/loki:3.0.0
+    container_name: loki-prod
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/loki.yml:/etc/loki/local-config.yaml:ro
+      - loki-data:/loki
+    ports:
+      - "8101:3100"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3100/ready > /dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - monitoring-net
+
+  promtail-prod:
+    image: grafana/promtail:3.0.0
+    container_name: promtail-prod
+    command: ["-config.file=/etc/promtail/config.yml"]
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/promtail.prod.yml:/etc/promtail/config.yml:ro
+      - /var/log:/var/log:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    healthcheck:
+      test: ["CMD-SHELL", "/usr/bin/promtail -version > /dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    networks:
+      - monitoring-net
+
+  cadvisor-prod:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: cadvisor-prod
+    restart: unless-stopped
+    privileged: true
+    devices:
+      - /dev/kmsg:/dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/metrics > /dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    networks:
+      - monitoring-net
+
+  alertmanager-prod:
+    image: prom/alertmanager:v0.28.1
+    container_name: alertmanager-prod
+    restart: unless-stopped
+    env_file:
+      - ../.env.prod
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        sed \
+          -e "s|__MATTERMOST_WEBHOOK_URL__|$${MATTERMOST_WEBHOOK_URL}|g" \
+          /etc/alertmanager/alertmanager.tmpl.yml > /tmp/alertmanager.yml
+        exec /bin/alertmanager \
+          --config.file=/tmp/alertmanager.yml \
+          --storage.path=/alertmanager
+    volumes:
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.tmpl.yml:ro
+      - alertmanager-data:/alertmanager
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9093/-/healthy > /dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    networks:
+      - monitoring-net
+
+  blackbox-exporter:
+    image: quay.io/prometheus/blackbox-exporter:v0.25.0
+    container_name: blackbox-exporter
+    restart: unless-stopped
+    command: ["--config.file=/etc/blackbox_exporter/config.yml"]
+    volumes:
+      - ./monitoring/blackbox.yml:/etc/blackbox_exporter/config.yml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9115/metrics > /dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    networks:
+      - monitoring-net
+
+  node-exporter-s2:
+    image: quay.io/prometheus/node-exporter:v1.8.2
+    container_name: node-exporter-s2
+    restart: unless-stopped
+    command:
+      - --path.rootfs=/host
+    volumes:
+      - /:/host:ro,rslave
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9100/metrics > /dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    networks:
+      - monitoring-net
+
+networks:
+  common-net:
+    external: true
+  ci-net:
+    external: true
+  monitoring-net:
+    external: true
+
+volumes:
+  rabbitmq-data:
+  jenkins-home:
+  prometheus-data:
+  grafana-data:
+  loki-data:
+  alertmanager-data:

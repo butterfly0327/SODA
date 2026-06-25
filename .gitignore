@@ -1,0 +1,67 @@
+# OS / Editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs / Runtime
+*.log
+logs/
+tmp/
+*.pid
+celerybeat-schedule*
+data-platform/api/celerybeat-schedule*
+
+# Root env files
+.env
+.env.*
+!.env.example
+!.env.template
+/*.pem
+
+# Local toolchains
+.local-jdk/
+local-jdk/
+
+# Infra env files (keep examples only)
+infra/.env
+infra/.env.*
+!infra/.env.example
+
+# Infra local artifacts
+infra/**/data/
+infra/**/tmp/
+infra/**/logs/
+infra/**/*.tfstate
+infra/**/.terraform/
+
+# Temp
+temp/
+test/
+auth.json
+**/auth.json
+/plans/
+/adr/
+output/
+.playwright-cli/
+
+# Python virtual environments / caches
+.venv/
+venv/
+env/
+ENV/
+__pycache__/
+*.py[cod]
+*.pyc
+*.pyo
+*.pyc.*
+.pytest_cache/
+.mypy_cache/
+
+# Frontend local/build artifacts
+frontend/.vite/
+frontend/coverage/
+frontend/*.tsbuildinfo
+frontend/.eslintcache

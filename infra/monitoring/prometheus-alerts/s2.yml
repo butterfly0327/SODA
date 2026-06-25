@@ -1,0 +1,12 @@
+groups:
+  - name: s2-monitoring
+    rules:
+      - alert: S2MonitoringServiceDown
+        expr: up{job=~"prometheus-prod|grafana-prod|loki-prod|alertmanager-prod|blackbox-exporter|node-exporter-s2|cadvisor-prod|rabbitmq-prod"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          env: ops
+        annotations:
+          summary: "S2 monitoring service down"
+          description: "Service {{ $labels.job }} is down on target {{ $labels.instance }}."

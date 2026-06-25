@@ -1,0 +1,199 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager-prod:9093"]
+
+scrape_configs:
+  - job_name: prometheus-prod
+    static_configs:
+      - targets: ["prometheus-prod:9090"]
+
+  - job_name: cadvisor-prod
+    static_configs:
+      - targets: ["cadvisor-prod:8080"]
+
+  - job_name: node-exporter-s2
+    static_configs:
+      - targets: ["node-exporter-s2:9100"]
+
+  - job_name: rabbitmq-prod
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["rabbitmq-prod:15692"]
+
+  - job_name: rabbitmq-dev
+    scheme: https
+    metrics_path: /internal/dev/rabbitmq/metrics
+    tls_config:
+      insecure_skip_verify: true
+    static_configs:
+      - targets: ["172.26.6.207"]
+        labels:
+          env: dev
+          service: rabbitmq-dev
+
+  - job_name: alertmanager-prod
+    static_configs:
+      - targets: ["alertmanager-prod:9093"]
+
+  - job_name: blackbox-exporter
+    static_configs:
+      - targets: ["blackbox-exporter:9115"]
+
+  - job_name: blackbox-http
+    metrics_path: /probe
+    params:
+      module: ["http_2xx"]
+    static_configs:
+      - targets: ["https://j14e105.p.ssafy.io/"]
+        labels:
+          env: prod
+          service: prod-frontend
+      - targets: ["https://j14e105.p.ssafy.io/api/health"]
+        labels:
+          env: prod
+          service: prod-spring
+      - targets: ["https://j14e105.p.ssafy.io/rag/health"]
+        labels:
+          env: prod
+          service: prod-fastapi
+      - targets: ["https://j14e105.p.ssafy.io/dev/"]
+        labels:
+          env: dev
+          service: dev-frontend
+      - targets: ["https://j14e105.p.ssafy.io/dev/api/health"]
+        labels:
+          env: dev
+          service: dev-spring
+      - targets: ["https://j14e105.p.ssafy.io/dev/rag/health"]
+        labels:
+          env: dev
+          service: dev-fastapi
+      - targets: ["https://j14e105.p.ssafy.io/jenkins/login"]
+        labels:
+          env: ops
+          service: jenkins
+      - targets: ["https://j14e105.p.ssafy.io/grafana/login"]
+        labels:
+          env: ops
+          service: grafana
+      - targets: ["__S3_ENDPOINT__"]
+        labels:
+          env: aws
+          service: s3
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+
+  - job_name: blackbox-tcp
+    metrics_path: /probe
+    params:
+      module: ["tcp_connect"]
+    static_configs:
+      - targets: ["__PROD_RDS_HOST__:__PROD_RDS_PORT__"]
+        labels:
+          env: aws
+          service: rds
+      - targets: ["__PROD_ELASTICACHE_HOST__:__PROD_ELASTICACHE_PORT__"]
+        labels:
+          env: aws
+          service: elasticache
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+
+  - job_name: s1-node-exporter
+    static_configs:
+      - targets: ["172.26.6.207:19100"]
+        labels:
+          server: s1
+
+  - job_name: s1-cadvisor
+    static_configs:
+      - targets: ["172.26.6.207:19180"]
+        labels:
+          server: s1
+
+  - job_name: s1-nginx-exporter
+    static_configs:
+      - targets: ["172.26.6.207:19113"]
+        labels:
+          server: s1
+
+  - job_name: s1-promtail
+    static_configs:
+      - targets: ["172.26.6.207:19081"]
+        labels:
+          server: s1
+
+  - job_name: spring-blue-actuator
+    scheme: https
+    metrics_path: /internal/prod/spring-blue/actuator/prometheus
+    tls_config:
+      insecure_skip_verify: true
+    static_configs:
+      - targets: ["172.26.6.207"]
+        labels:
+          env: prod
+          service: spring-blue
+
+  - job_name: spring-green-actuator
+    scheme: https
+    metrics_path: /internal/prod/spring-green/actuator/prometheus
+    tls_config:
+      insecure_skip_verify: true
+    static_configs:
+      - targets: ["172.26.6.207"]
+        labels:
+          env: prod
+          service: spring-green
+
+  - job_name: dev-spring-actuator
+    scheme: https
+    metrics_path: /internal/dev/spring/actuator/prometheus
+    tls_config:
+      insecure_skip_verify: true
+    static_configs:
+      - targets: ["172.26.6.207"]
+        labels:
+          env: dev
+          service: dev-spring
+
+  - job_name: fastapi-prod-metrics
+    scrape_interval: 60s
+    scheme: https
+    metrics_path: /internal/prod/fastapi/metrics
+    tls_config:
+      insecure_skip_verify: true
+    static_configs:
+      - targets: ["172.26.6.207"]
+        labels:
+          env: prod
+          service: fastapi-prod
+
+  - job_name: fastapi-dev-metrics
+    scrape_interval: 60s
+    scheme: https
+    metrics_path: /internal/dev/fastapi/metrics
+    tls_config:
+      insecure_skip_verify: true
+    static_configs:
+      - targets: ["172.26.6.207"]
+        labels:
+          env: dev
+          service: fastapi-dev

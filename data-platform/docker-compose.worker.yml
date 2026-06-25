@@ -1,0 +1,116 @@
+services:
+  crawler-openapi:
+    profiles:
+      - manual
+    image: python:3.12.10-slim
+    container_name: crawler-openapi
+    working_dir: /workspace/crawler/openapi
+    command: ["sh", "-c", "pip install --no-cache-dir -r /workspace/requirements.txt && python -m openapi_ingest ${OPENAPI_CRAWLER_ARGS:---list-sources}"]
+    restart: "no"
+    env_file:
+      - ../.env.dev
+    environment:
+      PYTHONUNBUFFERED: "1"
+      PYTHONPATH: /workspace/crawler/openapi/src
+    volumes:
+      - ./:/workspace
+      - ../requirements.txt:/workspace/requirements.txt:ro
+    networks:
+      - dev-net
+      - common-net
+
+  crawler-dataset:
+    profiles:
+      - manual
+    image: python:3.12.10-slim
+    container_name: crawler-dataset
+    working_dir: /workspace/crawler/dataset
+    command: ["sh", "-c", "pip install --no-cache-dir -r /workspace/requirements.txt && python -m metadata_ingest ${DATASET_CRAWLER_ARGS:---list-sources}"]
+    restart: "no"
+    env_file:
+      - ../.env.dev
+    environment:
+      PYTHONUNBUFFERED: "1"
+      PYTHONPATH: /workspace/crawler/dataset/src
+    volumes:
+      - ./:/workspace
+      - ../requirements.txt:/workspace/requirements.txt:ro
+    networks:
+      - dev-net
+      - common-net
+
+  celery-worker:
+    image: python:3.12.10-slim
+    container_name: celery-worker
+    working_dir: /workspace/api
+    command:
+      [
+        "sh",
+        "-c",
+        "pip install --no-cache-dir -r /workspace/requirements.txt && celery -A app.core.celery_app.celery_app worker --loglevel=INFO --queues=${CELERY_DEFAULT_QUEUE:-default},collect_queue,embed_queue,reindex_queue"
+      ]
+    restart: unless-stopped
+    env_file:
+      - ../.env.dev
+    environment:
+      PYTHONUNBUFFERED: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      PYTHONPATH: /workspace/api:/workspace/crawler/openapi/src:/workspace/crawler/dataset/src
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-amqp://${RABBITMQ_USER:-soda}:${RABBITMQ_PASSWORD:-change-me}@rabbitmq:5672/${RABBITMQ_VHOST:-dev}}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-rpc://}
+      DATASET_AUTO_COLLECTION_ENABLED: ${DATASET_AUTO_COLLECTION_ENABLED:-true}
+      DATASET_AUTO_COLLECTION_INTERVAL_HOURS: ${DATASET_AUTO_COLLECTION_INTERVAL_HOURS:-4}
+      DATASET_AUTO_COLLECTION_LIMIT: ${DATASET_AUTO_COLLECTION_LIMIT:-20}
+      DATASET_AUTO_COLLECTION_SAFE: ${DATASET_AUTO_COLLECTION_SAFE:-true}
+    volumes:
+      - ./:/workspace
+      - ../requirements.txt:/workspace/requirements.txt:ro
+    networks:
+      - dev-net
+      - common-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  celery-beat:
+    image: python:3.12.10-slim
+    container_name: celery-beat
+    working_dir: /workspace/api
+    command:
+      [
+        "sh",
+        "-c",
+        "pip install --no-cache-dir -r /workspace/requirements.txt && celery -A app.core.celery_app.celery_app beat --loglevel=INFO"
+      ]
+    restart: unless-stopped
+    env_file:
+      - ../.env.dev
+    environment:
+      PYTHONUNBUFFERED: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      PYTHONPATH: /workspace/api:/workspace/crawler/openapi/src:/workspace/crawler/dataset/src
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-amqp://${RABBITMQ_USER:-soda}:${RABBITMQ_PASSWORD:-change-me}@rabbitmq:5672/${RABBITMQ_VHOST:-dev}}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-rpc://}
+      DATASET_AUTO_COLLECTION_ENABLED: ${DATASET_AUTO_COLLECTION_ENABLED:-true}
+      DATASET_AUTO_COLLECTION_INTERVAL_HOURS: ${DATASET_AUTO_COLLECTION_INTERVAL_HOURS:-4}
+      DATASET_AUTO_COLLECTION_LIMIT: ${DATASET_AUTO_COLLECTION_LIMIT:-20}
+      DATASET_AUTO_COLLECTION_SAFE: ${DATASET_AUTO_COLLECTION_SAFE:-true}
+    volumes:
+      - ./:/workspace
+      - ../requirements.txt:/workspace/requirements.txt:ro
+    networks:
+      - dev-net
+      - common-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+networks:
+  dev-net:
+    external: true
+  common-net:
+    external: true

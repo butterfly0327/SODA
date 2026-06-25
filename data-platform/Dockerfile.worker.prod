@@ -1,0 +1,16 @@
+FROM python:3.12.10-slim
+
+WORKDIR /workspace
+
+COPY requirements.txt /workspace/requirements.txt
+
+RUN pip install --no-cache-dir \
+    -r /workspace/requirements.txt
+
+COPY data-platform/api /workspace/api
+COPY data-platform/crawler/openapi /workspace/crawler/openapi
+COPY data-platform/crawler/dataset /workspace/crawler/dataset
+
+ENV PYTHONUNBUFFERED=1
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1
+ENV PYTHONPATH=/workspace/api:/workspace/crawler/openapi/src:/workspace/crawler/dataset/src

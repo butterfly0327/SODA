@@ -1,0 +1,53 @@
+services:
+  dev-spring:
+    image: eclipse-temurin:21-jdk
+    container_name: dev-spring
+    restart: unless-stopped
+    env_file:
+      - ../.env.dev
+    working_dir: /workspace
+    command:
+      [
+        "sh",
+        "-c",
+        "jar_file=''; for f in ./build/libs/*.jar; do case \"$$f\" in *-plain.jar) continue;; *) jar_file=\"$$f\"; break;; esac; done; if [ -z \"$$jar_file\" ]; then echo 'No executable bootJar found in build/libs'; exit 1; fi; exec java -jar \"$$jar_file\""
+      ]
+    ports:
+      - "127.0.0.1:${DEV_SPRING_PUBLISHED_PORT:-18085}:${DEV_SPRING_PORT:-8085}"
+    expose:
+      - "${DEV_SPRING_PORT:-8085}"
+    environment:
+      SERVER_PORT: ${DEV_SPRING_PORT:-8085}
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-dev}
+      REDIS_HOST: ${REDIS_HOST:-host.docker.internal}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      GRADLE_USER_HOME: /tmp/.gradle
+      TZ: Asia/Seoul
+    volumes:
+      - ./:/workspace
+    networks:
+      - dev-net
+      - common-net
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "code=$$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:${DEV_SPRING_PORT:-8085}/health || true); [ \"$$code\" = \"200\" ] || [ \"$$code\" = \"401\" ]"
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+networks:
+  dev-net:
+    external: true
+  common-net:
+    external: true
