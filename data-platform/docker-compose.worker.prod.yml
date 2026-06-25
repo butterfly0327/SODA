@@ -1,0 +1,117 @@
+name: data-platform-prod
+
+services:
+  crawler-openapi-prod:
+    profiles:
+      - manual
+    image: soda-data-worker:prod
+    build:
+      context: ..
+      dockerfile: data-platform/Dockerfile.worker.prod
+    container_name: crawler-openapi-prod
+    working_dir: /workspace/crawler/openapi
+    command: ["python", "-m", "openapi_ingest", "--list-sources"]
+    restart: "no"
+    env_file:
+      - ../.env.prod
+    environment:
+      RABBITMQ_HOST: rabbitmq-prod
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - common-net
+
+  crawler-dataset-prod:
+    profiles:
+      - manual
+    image: soda-data-worker:prod
+    build:
+      context: ..
+      dockerfile: data-platform/Dockerfile.worker.prod
+    container_name: crawler-dataset-prod
+    working_dir: /workspace/crawler/dataset
+    command: ["python", "-m", "metadata_ingest", "--list-sources"]
+    restart: "no"
+    env_file:
+      - ../.env.prod
+    environment:
+      RABBITMQ_HOST: rabbitmq-prod
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - common-net
+
+  celery-worker-prod:
+    image: soda-data-worker:prod
+    build:
+      context: ..
+      dockerfile: data-platform/Dockerfile.worker.prod
+    container_name: celery-worker-prod
+    working_dir: /workspace/api
+    command:
+      [
+        "celery",
+        "-A",
+        "app.core.celery_app.celery_app",
+        "worker",
+        "--loglevel=INFO",
+        "--queues=default,collect_queue,embed_queue,reindex_queue"
+      ]
+    restart: unless-stopped
+    env_file:
+      - ../.env.prod
+    environment:
+      RABBITMQ_HOST: rabbitmq-prod
+      CELERY_RESULT_BACKEND: rpc://
+      DATASET_AUTO_COLLECTION_ENABLED: ${DATASET_AUTO_COLLECTION_ENABLED:-true}
+      DATASET_AUTO_COLLECTION_INTERVAL_HOURS: ${DATASET_AUTO_COLLECTION_INTERVAL_HOURS:-4}
+      DATASET_AUTO_COLLECTION_LIMIT: ${DATASET_AUTO_COLLECTION_LIMIT:-20}
+      DATASET_AUTO_COLLECTION_SAFE: ${DATASET_AUTO_COLLECTION_SAFE:-true}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - common-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  celery-beat-prod:
+    image: soda-data-worker:prod
+    build:
+      context: ..
+      dockerfile: data-platform/Dockerfile.worker.prod
+    container_name: celery-beat-prod
+    working_dir: /workspace/api
+    command:
+      [
+        "celery",
+        "-A",
+        "app.core.celery_app.celery_app",
+        "beat",
+        "--loglevel=INFO"
+      ]
+    restart: unless-stopped
+    env_file:
+      - ../.env.prod
+    environment:
+      RABBITMQ_HOST: rabbitmq-prod
+      CELERY_RESULT_BACKEND: rpc://
+      DATASET_AUTO_COLLECTION_ENABLED: ${DATASET_AUTO_COLLECTION_ENABLED:-true}
+      DATASET_AUTO_COLLECTION_INTERVAL_HOURS: ${DATASET_AUTO_COLLECTION_INTERVAL_HOURS:-4}
+      DATASET_AUTO_COLLECTION_LIMIT: ${DATASET_AUTO_COLLECTION_LIMIT:-20}
+      DATASET_AUTO_COLLECTION_SAFE: ${DATASET_AUTO_COLLECTION_SAFE:-true}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - common-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+networks:
+  common-net:
+    external: true

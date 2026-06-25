@@ -1,0 +1,21 @@
+services:
+  rabbitmq:
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+  jenkins:
+    ports:
+      - "18080:8080"
+
+  grafana:
+    ports:
+      - "13000:3000"
+
+  prometheus:
+    ports:
+      - "19090:9090"
+
+  loki:
+    ports:
+      - "13100:3100"

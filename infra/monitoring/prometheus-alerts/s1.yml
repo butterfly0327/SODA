@@ -1,0 +1,13 @@
+groups:
+  - name: s1-exporters
+    rules:
+      - alert: S1ExporterDown
+        expr: up{job=~"s1-node-exporter|s1-cadvisor|s1-nginx-exporter"} == 0
+        for: 2m
+        labels:
+          severity: warning
+          env: prod
+          service: s1
+        annotations:
+          summary: "S1 exporter down"
+          description: "Job {{ $labels.job }} is unreachable at {{ $labels.instance }}."

@@ -1,0 +1,54 @@
+spring:
+  application:
+    name: E105
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://${DEV_POSTGRES_HOST:${PROD_RDS_HOST:localhost}}:${DEV_POSTGRES_PORT:${PROD_RDS_PORT:5432}}/${DEV_POSTGRES_DB:${PROD_RDS_DB:postgres}}}
+    username: ${SPRING_DATASOURCE_USERNAME:${DEV_POSTGRES_USER:${PROD_RDS_USER:postgres}}}
+    password: ${SPRING_DATASOURCE_PASSWORD:${DEV_POSTGRES_PASSWORD:${PROD_RDS_PASSWORD:postgres}}}
+    driver-class-name: org.postgresql.Driver
+  jackson:
+    time-zone: Asia/Seoul
+  jpa:
+    hibernate:
+      ddl-auto: none
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        jdbc:
+          time_zone: Asia/Seoul
+    open-in-view: false
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      repositories:
+        enabled: false
+
+ssafy:
+  client-id: ${SSAFY_CLIENT_ID:dummy-client-id}
+  client-secret: ${SSAFY_CLIENT_SECRET:dummy-client-secret}
+  redirect-urls: ${SSAFY_REDIRECT_URLS:${SSAFY_REDIRECT_URL:http://localhost/callback}}
+  token-url: https://project.ssafy.com/ssafy/oauth2/token
+  user-info-url: https://project.ssafy.com/ssafy/resources/userInfo
+
+jwt:
+  secret: ${JWT_SECRET:MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=}
+  access-token-expiration: 3600000
+  refresh-token-expiration: 1209600000
+
+fastapi:
+  base-url: ${FASTAPI_BASE_URL:http://localhost:8000}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  prometheus:
+    metrics:
+      export:
+        enabled: true

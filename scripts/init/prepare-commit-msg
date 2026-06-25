@@ -1,0 +1,72 @@
+#!/bin/bash
+# ============================================================
+# prepare-commit-msg — Jira 이슈 키 자동 변환 Hook
+# ============================================================
+#
+# [#31] → [S14P21E105-31] 자동 변환
+#
+# 변환 대상:
+#   feat[#31]: 메시지          → feat[S14P21E105-31]: 메시지
+#   fix[#31,#32]: 메시지       → fix[S14P21E105-31,S14P21E105-32]: 메시지
+#   feat[#31, #32]: 메시지     → feat[S14P21E105-31, S14P21E105-32]: 메시지
+#
+# 변환하지 않는 것:
+#   대괄호 밖의 모든 숫자 (포트, 버전, 서버 번호 등)
+#   이미 변환된 Jira 키 [S14P21E105-31]
+#   merge commit, rebase 등 자동 생성 메시지
+#
+# 설치 방법:
+#   cp prepare-commit-msg .git/hooks/
+#   chmod +x .git/hooks/prepare-commit-msg
+#
+# ============================================================
+
+# ── 설정 ──
+JIRA_PREFIX="S14P21E105"
+EXPECTED_REPO="S14P21E105"
+
+# ── 프로젝트 검증 (이 저장소에서만 동작) ──
+REMOTE_URL=$(git remote get-url origin 2>/dev/null || echo "")
+if [[ "$REMOTE_URL" != *"$EXPECTED_REPO"* ]]; then
+    exit 0
+fi
+
+# ── 인자 ──
+COMMIT_MSG_FILE="$1"
+COMMIT_SOURCE="$2"  # message, merge, squash, commit(amend) 등
+
+# ── 자동 생성 커밋은 건드리지 않음 ──
+# merge, squash, rebase 시 자동 생성되는 메시지는 변환하지 않음
+if [ "$COMMIT_SOURCE" = "merge" ] || [ "$COMMIT_SOURCE" = "squash" ]; then
+    exit 0
+fi
+
+# ── 이미 Jira 키가 있으면 중복 변환 방지 ──
+if grep -qP "\[${JIRA_PREFIX}-\d+" "$COMMIT_MSG_FILE"; then
+    exit 0
+fi
+
+# ── 변환 대상이 없으면 종료 ──
+# 대괄호 안에 #숫자 패턴이 있는지 확인
+if ! grep -qP '\[([^]]*#\d+[^]]*)\]' "$COMMIT_MSG_FILE"; then
+    exit 0
+fi
+
+# ── 핵심 변환 ──
+# 대괄호 [...] 안의 #숫자만 변환
+# [#31]         → [S14P21E105-31]
+# [#31,#32]     → [S14P21E105-31,S14P21E105-32]
+# [#31, #32]    → [S14P21E105-31, S14P21E105-32]
+#
+# 동작 원리:
+#   1. 대괄호 [...] 내용을 찾음
+#   2. 그 안에서만 #숫자 → JIRA_PREFIX-숫자로 치환
+#   3. 대괄호 밖은 절대 건드리지 않음
+
+perl -i -pe '
+    s/\[([^\]]*)\]/
+        my $inside = $1;
+        $inside =~ s\/#(\d+)\/'"${JIRA_PREFIX}"'-$1\/g;
+        "[$inside]"
+    /ge
+' "$COMMIT_MSG_FILE"

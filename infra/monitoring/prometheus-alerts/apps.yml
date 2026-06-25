@@ -1,0 +1,11 @@
+groups:
+  - name: app-blackbox
+    rules:
+      - alert: AppEndpointDown
+        expr: probe_success{job=~"blackbox-http|blackbox-tcp"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.env }} {{ $labels.service }} endpoint down"
+          description: "{{ $labels.instance }} probe failed for more than 2 minutes."

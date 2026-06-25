@@ -1,0 +1,67 @@
+services:
+  codex-adapter-prod:
+    profiles:
+      - prod
+    build:
+      context: ..
+      dockerfile: data-platform/codex_adapter/Dockerfile.prod
+    image: soda-codex-adapter:prod
+    container_name: codex-adapter-prod
+    restart: unless-stopped
+    env_file:
+      - ../.env.prod
+    environment:
+      ADAPTER_APP_ENV: ${APP_ENV:-prod}
+      ADAPTER_APP_HOST: 0.0.0.0
+      ADAPTER_APP_PORT: 8091
+      CODEX_COMMAND: ${CODEX_COMMAND:-codex}
+      CODEX_HOME_PATH: /root/.codex
+      CODEX_MODEL: ${CODEX_MODEL:-gpt-5.4}
+      CODEX_TIMEOUT_SECONDS: ${CODEX_TIMEOUT_SECONDS:-45}
+      CODEX_MAX_CONCURRENCY: ${CODEX_MAX_CONCURRENCY:-1}
+      CODEX_MAX_QUEUE: ${CODEX_MAX_QUEUE:-100}
+    volumes:
+      - ${CODEX_HOME_HOST_PATH:-/home/ubuntu/codex-home-prod}:/root/.codex
+    expose:
+      - "8091"
+    networks:
+      - prod-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+  fastapi-prod:
+    profiles:
+      - prod
+    build:
+      context: ..
+      dockerfile: data-platform/api/Dockerfile.prod
+    image: soda-fastapi:prod
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "${PROD_FASTAPI_PORT:-8083}"]
+    environment:
+      APP_ENV: ${APP_ENV:-prod}
+      APP_HOST: ${APP_HOST:-0.0.0.0}
+      APP_PORT: ${PROD_FASTAPI_PORT:-8083}
+      APP_DEBUG: "false"
+      PYTHONUNBUFFERED: "1"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os, urllib.request; urllib.request.urlopen(f\"http://127.0.0.1:{os.getenv('APP_PORT','8083')}/v1/health\")"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

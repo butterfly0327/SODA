@@ -1,0 +1,175 @@
+===== SOURCE aihub =====
+[exit=0]
+STDOUT:
+{
+  "aihub": {
+    "status": "completed",
+    "collected_count": 0,
+    "upserted_count": 0,
+    "deactivated_count": 0,
+    "failed_count": 0,
+    "last_saved_source_dataset_key": null,
+    "effective_limit": 5,
+    "safe_mode": false,
+    "reconcile_missing": false,
+    "max_runtime_seconds": 600
+  }
+}
+STDERR:
+
+
+===== SOURCE aws_odr =====
+[exit=0]
+STDOUT:
+{
+  "aws_odr": {
+    "status": "completed",
+    "collected_count": 0,
+    "upserted_count": 0,
+    "deactivated_count": 0,
+    "failed_count": 0,
+    "last_saved_source_dataset_key": null,
+    "effective_limit": 5,
+    "safe_mode": false,
+    "reconcile_missing": false,
+    "max_runtime_seconds": 600
+  }
+}
+STDERR:
+
+
+===== SOURCE data_europa =====
+[exit=0]
+STDOUT:
+{
+  "data_europa": {
+    "status": "completed",
+    "collected_count": 0,
+    "upserted_count": 0,
+    "deactivated_count": 0,
+    "failed_count": 0,
+    "last_saved_source_dataset_key": null,
+    "effective_limit": 5,
+    "safe_mode": false,
+    "reconcile_missing": false,
+    "max_runtime_seconds": 600
+  }
+}
+STDERR:
+
+
+===== SOURCE data_gov =====
+[exit=0]
+STDOUT:
+{
+  "data_gov": {
+    "status": "completed",
+    "collected_count": 6,
+    "upserted_count": 5,
+    "deactivated_count": 0,
+    "failed_count": 0,
+    "last_saved_source_dataset_key": "831b8e04-3ffe-4953-9146-e0e7fafb4313",
+    "effective_limit": 5,
+    "safe_mode": false,
+    "reconcile_missing": false,
+    "max_runtime_seconds": 600
+  }
+}
+STDERR:
+
+
+===== SOURCE figshare =====
+[exit=0]
+STDOUT:
+{
+  "figshare": {
+    "status": "completed",
+    "collected_count": 5,
+    "upserted_count": 5,
+    "deactivated_count": 0,
+    "failed_count": 0,
+    "last_saved_source_dataset_key": "31804883",
+    "effective_limit": 5,
+    "safe_mode": false,
+    "reconcile_missing": false,
+    "max_runtime_seconds": 600
+  }
+}
+STDERR:
+
+
+===== SOURCE harvard_dataverse =====
+[exit=0]
+STDOUT:
+{
+  "harvard_dataverse": {
+    "status": "completed",
+    "collected_count": 5,
+    "upserted_count": 5,
+    "deactivated_count": 0,
+    "failed_count": 0,
+    "last_saved_source_dataset_key": "doi:10.7910/DVN/UPT3EG",
+    "effective_limit": 5,
+    "safe_mode": false,
+    "reconcile_missing": false,
+    "max_runtime_seconds": 600
+  }
+}
+STDERR:
+
+
+===== SOURCE huggingface =====
+[exit=0]
+STDOUT:
+{
+  "huggingface": {
+    "status": "completed",
+    "collected_count": 18,
+    "upserted_count": 5,
+    "deactivated_count": 0,
+    "failed_count": 0,
+    "last_saved_source_dataset_key": "DigitalClockwork/spatial_instruct_v1",
+    "effective_limit": 5,
+    "safe_mode": false,
+    "reconcile_missing": false,
+    "max_runtime_seconds": 600
+  }
+}
+STDERR:
+
+
+===== SOURCE kaggle =====
+[exit=0]
+STDOUT:
+{
+  "kaggle": {
+    "status": "completed",
+    "collected_count": 9,
+    "upserted_count": 5,
+    "deactivated_count": 0,
+    "failed_count": 0,
+    "last_saved_source_dataset_key": "shuhengmo/uber-nyc-forhire-vehicles-trip-data-2021",
+    "effective_limit": 5,
+    "safe_mode": false,
+    "reconcile_missing": false,
+    "max_runtime_seconds": 600
+  }
+}
+STDERR:
+
+
+===== SOURCE zenodo =====
+[exit=0]
+STDOUT:
+{
+  "zenodo": {
+    "status": "failed",
+    "error": "Client error '400 BAD REQUEST' for url 'https://zenodo.org/api/records?page=401&size=25&sort=newest&q=resource_type.type%3Adataset'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/400",
+    "effective_limit": 5,
+    "safe_mode": false,
+    "reconcile_missing": false,
+    "max_runtime_seconds": 600
+  }
+}
+STDERR:
+

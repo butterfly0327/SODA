@@ -1,0 +1,15 @@
+* text=auto
+.gitattributes text eol=lf
+
+# Keep source and config files as LF
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.jsx text eol=lf
+*.mjs text eol=lf
+*.json text eol=lf
+*.css text eol=lf
+*.scss text eol=lf
+*.md text eol=lf
+*.svg text eol=lf
+*.sh text eol=lf
